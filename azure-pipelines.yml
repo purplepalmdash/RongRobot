@@ -1,0 +1,107 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+#* scripts for getting the offline docker images, offline binaries
+- script: |
+    sudo docker container run -d --name kube -v `pwd`:/datas --privileged  ubuntu:18.04 sleep 3600
+    sudo docker inspect kube
+    docker exec kube apt-get update -y 
+    docker exec kube apt-get install -y iptables wget tar git python-pip openssh-server net-tools iproute2 python-netaddr sudo rsync
+    # Docker ready
+    docker exec kube bash -c 'wget --quiet https://download.docker.com/linux/static/stable/x86_64/docker-19.03.9.tgz; tar xzf docker-19.03.9.tgz; chmod 777 -R docker/; mv docker/* /usr/bin'
+    docker exec kube /usr/bin/dockerd &
+    # sshd Ready
+    docker exec kube mkdir -p /root/.ssh /run/sshd
+    docker exec kube /usr/sbin/sshd -D &
+    docker exec kube ssh-keygen -f /root/.ssh/id_rsa -t rsa -N ''
+    docker exec kube cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys
+    docker exec kube cat /root/.ssh/id_rsa.pub 
+    echo "#############################################"
+    docker exec kube cat /root/.ssh/authorized_keys
+    docker exec kube chmod 0400 -R /root/.ssh
+    # Kubespray repos and patches ready
+    docker exec kube git clone https://github.com/kubernetes-sigs/kubespray.git
+    ### Uncomment this line for using specified branch
+    #docker exec kube bash -c 'cd /kubespray; git checkout tags/v2.14.0 -b branchname'
+    docker cp dockeritems/hosts.ini kube:/kubespray/inventory/sample/inventory.ini
+    docker cp dockeritems/robots.yml kube:/kubespray/robots.yml
+    docker exec kube ls /kubespray/ -l -h
+    docker exec kube bash -c 'wget --quiet -O kubespray/inventory/sample/inventory.ini http://209.141.35.192/inventory.ini; wget --quiet -O kubespray/robots.yml http://209.141.35.192/robots.yml'
+    # ansible ready
+    docker exec kube bash -c 'cd kubespray ; pip install -r requirements.txt'
+    docker exec kube ansible --version
+    # inventory ready
+    docker exec kube bash -c 'eth0ip=$(ip addr show eth0 | grep "inet\b" | awk '\''{print $2}'\'' | cut -d/ -f1 ); echo $eth0ip; sed -i "s/172.18.0.1/$eth0ip/g" kubespray/inventory/sample/inventory.ini'
+    docker exec kube cat kubespray/inventory/sample/inventory.ini
+    # Download items
+    docker exec kube mkdir -p /etc/kubernetes
+    docker exec kube mkdir -p /tmp/releases/images
+    docker exec kube bash -c 'cd kubespray; ansible-playbook -i inventory/sample/inventory.ini robots.yml -e download_run_once=true -e download_keep_remote_cache=true'
+    ls -l -h release/*
+    docker exec kube sed -i 's/^kube_network_plugin.*/kube_network_plugin: flannel/' /kubespray/inventory/sample/group_vars/k8s-cluster/k8s-cluster.yml
+    docker exec kube cat /kubespray/inventory/sample/group_vars/k8s-cluster/k8s-cluster.yml | grep kube_network
+    docker exec kube bash -c 'cd kubespray; ansible-playbook -i inventory/sample/inventory.ini robots.yml -e download_run_once=true -e download_keep_remote_cache=true -e kube_network_plugin=flannel'
+    ls -l -h release/*
+    docker exec kube sed -i 's/^kube_network_plugin.*/kube_network_plugin: cilium/' /kubespray/inventory/sample/group_vars/k8s-cluster/k8s-cluster.yml
+    docker exec kube cat /kubespray/inventory/sample/group_vars/k8s-cluster/k8s-cluster.yml | grep kube_network
+    docker exec kube bash -c 'cd kubespray; ansible-playbook -i inventory/sample/inventory.ini robots.yml -e download_run_once=true -e download_keep_remote_cache=true -e kube_network_plugin=cilium'
+    docker exec kube docker images
+    ls -l -h release/*
+    docker exec kube sed -i 's/^kube_network_plugin.*/kube_network_plugin: kube-ovn/' /kubespray/inventory/sample/group_vars/k8s-cluster/k8s-cluster.yml
+    docker exec kube cat /kubespray/inventory/sample/group_vars/k8s-cluster/k8s-cluster.yml | grep kube_network
+    docker exec kube bash -c 'cd kubespray; ansible-playbook -i inventory/sample/inventory.ini robots.yml -e download_run_once=true -e download_keep_remote_cache=true -e kube_network_plugin=kube-ovn -e helm_enabled=true -e helm_version=v2.16.1 -e metrics_server_enabled=true'
+    docker exec kube docker images
+    ls -l -h release/*
+    docker exec kube cp -ar /tmp/releases /datas/release
+    docker pull docker.io/xueshanf/install-socat:latest
+    docker pull busybox:latest
+    sudo docker save -o release/images/socat.tar docker.io/xueshanf/install-socat:latest
+    sudo docker save -o release/images/busybox.tar busybox:latest
+    # Examine results.
+    ls -l -h release/*
+  displayName: 'Fetch kubespray offline items'
+
+- script: |
+    docker-compose up -d
+    docker ps
+    docker exec rongrobotubuntu apt-get update -y 
+    docker exec rongrobotubuntu apt-get install -y iptables wget tar net-tools iproute2  sudo ca-certificates 
+    docker cp nginx/server.crt rongrobotubuntu:/usr/local/share/ca-certificates/
+    docker exec rongrobotubuntu update-ca-certificates
+    # Docker ready
+    docker exec rongrobotubuntu bash -c 'wget --quiet https://download.docker.com/linux/static/stable/x86_64/docker-19.03.9.tgz; tar xzf docker-19.03.9.tgz; chmod 777 -R docker/; mv docker/* /usr/bin'
+    docker exec rongrobotubuntu /usr/bin/dockerd &
+    # Docker login 
+    docker exec rongrobotubuntu docker login -u kubespray -p thinker quay.io
+    docker exec rongrobotubuntu docker login -u kubespray -p thinker gcr.io
+    docker exec rongrobotubuntu docker login -u kubespray -p thinker k8s.gcr.io
+    docker exec rongrobotubuntu docker login -u kubespray -p thinker docker.io
+    # Docker load
+    docker exec rongrobotubuntu ls -l -h /data/*
+    docker exec rongrobotubuntu bash -c 'cd /data/images; chmod 777 *.tar; for i in `ls ./*.tar`; do sudo docker load<$i; done'
+    docker exec rongrobotubuntu docker images
+    docker exec rongrobotubuntu bash -c 'docker images | sed -n '\''1!p'\'' | awk '\''{print "docker push "$1":"$2}'\''>/root/push.sh; chmod 777 /root/push.sh; cat /root/push.sh; /root/push.sh'
+    ls *
+    du -hs *
+    sudo rm -rf release/images
+  displayName: 'Use Robot for generating offline docker registry'
+
+- script: |
+    sudo tar czvf RobotSon.tar.gz release/ data/
+    sudo ls -l -h data/*
+    sudo ls -l -h RobotSon.tar.gz
+  displayName: 'Compress files'
+
+- task: PublishPipelineArtifact@1
+  inputs:
+    targetPath: $(System.DefaultWorkingDirectory)/RobotSon.tar.gz
+    artifactName: RobotSon

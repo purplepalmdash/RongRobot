@@ -1,0 +1,39 @@
+version: "3"
+services:
+
+  nginx:
+    image: nginx:1.9
+    container_name: rongrobotnginx
+    #ports:
+    #  - 443:443
+    links:
+      - registry:registry
+    volumes:
+      - ./nginx/:/etc/nginx/conf.d:ro
+    networks:
+      default:
+        aliases:
+          - example.local
+          - docker.io
+          - gcr.io
+          - k8s.gcr.io
+          - quay.io
+          - registry-1.docker.io
+  
+  registry:
+    image: registry:2
+    container_name: rongrobotregistry
+    #ports:
+    #  - 127.0.0.1:5050:5000
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /data
+    volumes:
+      - ./data:/data
+
+  ubuntu:
+    image: ubuntu:18.04
+    container_name: rongrobotubuntu
+    command: bash -c "sleep 36000"
+    privileged: true
+    volumes:
+      - ./release:/data

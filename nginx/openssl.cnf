@@ -1,0 +1,31 @@
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+
+[req_distinguished_name]
+countryName = SL
+countryName_default = SL
+stateOrProvinceName = Western
+stateOrProvinceName_default = Western
+localityName = Colombo
+localityName_default = Colombo
+organizationalUnitName = ABC
+organizationalUnitName_default = ABC
+commonName = *.docker.io
+commonName_max = 64
+
+[ v3_req ]
+# Extensions to add to a certificate request
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = *.docker.io
+DNS.2 = *.gcr.io
+DNS.3 = *.quay.io
+DNS.4 = *.elastic.co
+DNS.5 = docker.io
+DNS.6 = gcr.io
+DNS.7 = quay.io
+DNS.8 = elastic.co
