@@ -1,0 +1,1459 @@
+diff --git a/cluster.yml b/cluster.yml
+index b7476d47..c7201ecb 100644
+--- a/cluster.yml
++++ b/cluster.yml
+@@ -1,6 +1,6 @@
+ ---
+-- name: Check ansible version
+-  import_playbook: ansible_version.yml
++#- name: Check ansible version
++#  import_playbook: ansible_version.yml
+ 
+ - hosts: all
+   gather_facts: false
+diff --git a/contrib/packaging/rpm/kubespray.spec b/contrib/packaging/rpm/kubespray.spec
+deleted file mode 100644
+index e4c1808b..00000000
+--- a/contrib/packaging/rpm/kubespray.spec
++++ /dev/null
+@@ -1,62 +0,0 @@
+-%global srcname kubespray
+-
+-%{!?upstream_version: %global upstream_version %{version}%{?milestone}}
+-
+-Name:           kubespray
+-Version:        master
+-Release:        %(git describe | sed -r 's/v(\S+-?)-(\S+)-(\S+)/\1.dev\2+\3/')
+-Summary:        Ansible modules for installing Kubernetes
+-
+-Group:          System Environment/Libraries
+-License:        ASL 2.0
+-Url:            https://github.com/kubernetes-incubator/kubespray
+-Source0:        https://github.com/kubernetes-incubator/kubespray/archive/%{upstream_version}.tar.gz#/%{name}-%{release}.tar.gz
+-
+-BuildArch:      noarch
+-BuildRequires:  git
+-BuildRequires:  python2
+-BuildRequires:  python2-devel
+-BuildRequires:  python2-setuptools
+-BuildRequires:  python-d2to1
+-BuildRequires:  python2-pbr
+-
+-Requires: ansible >= 2.5.0
+-Requires: python-jinja2 >= 2.10
+-Requires: python-netaddr
+-Requires: python-pbr
+-
+-%description
+-
+-Ansible-kubespray is a set of Ansible modules and playbooks for
+-installing a Kubernetes cluster. If you have questions, join us
+-on the https://slack.k8s.io, channel '#kubespray'.
+-
+-%prep
+-%autosetup -n %{name}-%{upstream_version} -S git
+-
+-
+-%build
+-export PBR_VERSION=%{release}
+-%{__python2} setup.py build bdist_rpm
+-
+-
+-%install
+-export PBR_VERSION=%{release}
+-export SKIP_PIP_INSTALL=1
+-%{__python2} setup.py install --skip-build --root %{buildroot} bdist_rpm
+-
+-
+-%files
+-%doc %{_docdir}/%{name}/README.md
+-%doc %{_docdir}/%{name}/inventory/sample/hosts.ini
+-%config %{_sysconfdir}/%{name}/ansible.cfg
+-%config %{_sysconfdir}/%{name}/inventory/sample/group_vars/all.yml
+-%config %{_sysconfdir}/%{name}/inventory/sample/group_vars/k8s-cluster.yml
+-%license %{_docdir}/%{name}/LICENSE
+-%{python2_sitelib}/%{srcname}-%{release}-py%{python2_version}.egg-info
+-%{_datarootdir}/%{name}/roles/
+-%{_datarootdir}/%{name}/playbooks/
+-%defattr(-,root,root)
+-
+-
+-%changelog
+diff --git a/inventory/sample/hosts.ini b/inventory/sample/hosts.ini
+new file mode 100644
+index 00000000..76927d95
+--- /dev/null
++++ b/inventory/sample/hosts.ini
+@@ -0,0 +1,24 @@
++[all]
++focal-1 ansible_host=10.137.149.162 ip=10.137.149.162
++#focal-2 ansible_host=10.137.149.53 ip=10.137.149.53
++
++[kube-deploy]
++focal-1
++
++[kube-master]
++focal-1
++
++[etcd]
++focal-1
++
++[kube-node]
++focal-1
++#focal-2
++
++[k8s-cluster:children]
++kube-master
++kube-node
++
++[all:vars]
++ansible_ssh_user=root
++ansible_ssh_private_key_file=./.rong/deploy.key
+diff --git a/roles/bootstrap-os/tasks/main.yml b/roles/bootstrap-os/tasks/main.yml
+index 2047c5f4..24dd335b 100644
+--- a/roles/bootstrap-os/tasks/main.yml
++++ b/roles/bootstrap-os/tasks/main.yml
+@@ -1,87 +1,6 @@
+ ---
+-- name: Fetch /etc/os-release
+-  raw: cat /etc/os-release
+-  register: os_release
+-  changed_when: false
+-  # This command should always run, even in check mode
+-  check_mode: false
+-  environment: {}
++- include_tasks: main_main.yml
++  when: kfz is undefined
+ 
+-- include_tasks: bootstrap-centos.yml
+-  when: '"CentOS" in os_release.stdout or "Red Hat Enterprise Linux" in os_release.stdout or "Oracle" in os_release.stdout'
+-
+-- include_tasks: bootstrap-clearlinux.yml
+-  when: '"Clear Linux OS" in os_release.stdout'
+-
+-- include_tasks: bootstrap-fedora-coreos.yml
+-  when: '"ID=fedora" in os_release.stdout and "VARIANT_ID=coreos" in os_release.stdout'
+-
+-- include_tasks: bootstrap-flatcar.yml
+-  when:
+-    - '"Flatcar" in os_release.stdout'
+-    - '"ID=fedora" not in os_release.stdout'
+-
+-- include_tasks: bootstrap-debian.yml
+-  when: '"Debian" in os_release.stdout or "Ubuntu" in os_release.stdout'
+-
+-- include_tasks: bootstrap-fedora.yml
+-  when:
+-    - '"Fedora" in os_release.stdout'
+-    - '"VARIANT_ID=coreos" not in os_release.stdout'
+-
+-- include_tasks: bootstrap-opensuse.yml
+-  when: '"openSUSE" in os_release.stdout'
+-
+-- name: Create remote_tmp for it is used by another module
+-  file:
+-    path: "{{ ansible_remote_tmp | default('~/.ansible/tmp') }}"
+-    state: directory
+-    mode: 0700
+-
+-# Workaround for https://github.com/ansible/ansible/issues/42726
+-# (1/3)
+-- name: Gather host facts to get ansible_os_family
+-  setup:
+-    gather_subset: '!all'
+-    filter: ansible_*
+-
+-- name: Assign inventory name to unconfigured hostnames (non-CoreOS, non-Flatcar, Suse and ClearLinux)
+-  hostname:
+-    name: "{{ inventory_hostname }}"
+-  when:
+-    - override_system_hostname
+-    - ansible_os_family not in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] and not is_fedora_coreos
+-
+-# (2/3)
+-- name: Assign inventory name to unconfigured hostnames (CoreOS, Flatcar, Suse and ClearLinux only)
+-  command: "hostnamectl set-hostname {{ inventory_hostname }}"
+-  register: hostname_changed
+-  become: true
+-  changed_when: false
+-  when:
+-    - override_system_hostname
+-    - ansible_os_family in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] or is_fedora_coreos
+-
+-# (3/3)
+-- name: Update hostname fact (CoreOS, Flatcar, Suse and ClearLinux only)
+-  setup:
+-    gather_subset: '!all'
+-    filter: ansible_hostname
+-  when:
+-    - override_system_hostname
+-    - ansible_os_family in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] or is_fedora_coreos
+-
+-- name: "Install ceph-commmon package"
+-  package:
+-    name:
+-      - ceph-common
+-    state: present
+-  when: rbd_provisioner_enabled|default(false)
+-
+-- name: Ensure bash_completion.d folder exists
+-  file:
+-    name: /etc/bash_completion.d/
+-    state: directory
+-    owner: root
+-    group: root
+-    mode: 0755
++- include_tasks: main_kfz.yml
++  when: kfz is defined
+diff --git a/roles/bootstrap-os/tasks/main_kfz.yml b/roles/bootstrap-os/tasks/main_kfz.yml
+new file mode 100644
+index 00000000..dd1ec3fd
+--- /dev/null
++++ b/roles/bootstrap-os/tasks/main_kfz.yml
+@@ -0,0 +1,88 @@
++---
++- name: Fetch /etc/os-release
++  raw: cat /etc/os-release
++  register: os_release
++  changed_when: false
++  # This command should always run, even in check mode
++  check_mode: false
++  environment: {}
++
++  #- include_tasks: bootstrap-centos.yml
++  #  when: '"CentOS" in os_release.stdout or "Red Hat Enterprise Linux" in os_release.stdout or "Oracle" in os_release.stdout'
++  #
++  #- include_tasks: bootstrap-clearlinux.yml
++  #  when: '"Clear Linux OS" in os_release.stdout'
++  #
++  #- include_tasks: bootstrap-fedora-coreos.yml
++  #  when: '"ID=fedora" in os_release.stdout and "VARIANT_ID=coreos" in os_release.stdout'
++  #
++  #- include_tasks: bootstrap-flatcar.yml
++  #  when:
++  #    - '"Flatcar" in os_release.stdout'
++  #    - '"ID=fedora" not in os_release.stdout'
++  #
++  #- include_tasks: bootstrap-debian.yml
++  #  when: '"Debian" in os_release.stdout or "Ubuntu" in os_release.stdout'
++  #
++  #- include_tasks: bootstrap-fedora.yml
++  #  when:
++  #    - '"Fedora" in os_release.stdout'
++  #    - '"VARIANT_ID=coreos" not in os_release.stdout'
++  #
++  #- include_tasks: bootstrap-opensuse.yml
++  #  when: '"openSUSE" in os_release.stdout'
++
++- name: Create remote_tmp for it is used by another module
++  file:
++    path: "{{ ansible_remote_tmp | default('~/.ansible/tmp') }}"
++    state: directory
++    mode: 0700
++
++# Workaround for https://github.com/ansible/ansible/issues/42726
++# (1/3)
++- name: Gather host facts to get ansible_os_family
++  setup:
++    gather_subset: '!all'
++    filter: ansible_*
++
++- name: Assign inventory name to unconfigured hostnames (non-CoreOS, non-Flatcar, Suse and ClearLinux)
++  hostname:
++    name: "{{ inventory_hostname }}"
++  when:
++    - override_system_hostname
++    - ansible_os_family not in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] and not is_fedora_coreos
++  ignore_errors: true
++
++# (2/3)
++- name: Assign inventory name to unconfigured hostnames (CoreOS, Flatcar, Suse and ClearLinux only)
++  command: "hostnamectl set-hostname {{ inventory_hostname }}"
++  register: hostname_changed
++  become: true
++  changed_when: false
++  when:
++    - override_system_hostname
++    - ansible_os_family in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] or is_fedora_coreos
++
++# (3/3)
++- name: Update hostname fact (CoreOS, Flatcar, Suse and ClearLinux only)
++  setup:
++    gather_subset: '!all'
++    filter: ansible_hostname
++  when:
++    - override_system_hostname
++    - ansible_os_family in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] or is_fedora_coreos
++
++- name: "Install ceph-commmon package"
++  package:
++    name:
++      - ceph-common
++    state: present
++  when: rbd_provisioner_enabled|default(false)
++
++- name: Ensure bash_completion.d folder exists
++  file:
++    name: /etc/bash_completion.d/
++    state: directory
++    owner: root
++    group: root
++    mode: 0755
+diff --git a/roles/bootstrap-os/tasks/main_main.yml b/roles/bootstrap-os/tasks/main_main.yml
+new file mode 100644
+index 00000000..c55c3617
+--- /dev/null
++++ b/roles/bootstrap-os/tasks/main_main.yml
+@@ -0,0 +1,88 @@
++---
++- name: Fetch /etc/os-release
++  raw: cat /etc/os-release
++  register: os_release
++  changed_when: false
++  # This command should always run, even in check mode
++  check_mode: false
++  environment: {}
++
++- include_tasks: bootstrap-centos.yml
++  when: '"CentOS" in os_release.stdout or "Red Hat Enterprise Linux" in os_release.stdout or "Oracle" in os_release.stdout'
++
++- include_tasks: bootstrap-clearlinux.yml
++  when: '"Clear Linux OS" in os_release.stdout'
++
++- include_tasks: bootstrap-fedora-coreos.yml
++  when: '"ID=fedora" in os_release.stdout and "VARIANT_ID=coreos" in os_release.stdout'
++
++- include_tasks: bootstrap-flatcar.yml
++  when:
++    - '"Flatcar" in os_release.stdout'
++    - '"ID=fedora" not in os_release.stdout'
++
++- include_tasks: bootstrap-debian.yml
++  when: '"Debian" in os_release.stdout or "Ubuntu" in os_release.stdout'
++
++- include_tasks: bootstrap-fedora.yml
++  when:
++    - '"Fedora" in os_release.stdout'
++    - '"VARIANT_ID=coreos" not in os_release.stdout'
++
++- include_tasks: bootstrap-opensuse.yml
++  when: '"openSUSE" in os_release.stdout'
++
++- name: Create remote_tmp for it is used by another module
++  file:
++    path: "{{ ansible_remote_tmp | default('~/.ansible/tmp') }}"
++    state: directory
++    mode: 0700
++
++# Workaround for https://github.com/ansible/ansible/issues/42726
++# (1/3)
++- name: Gather host facts to get ansible_os_family
++  setup:
++    gather_subset: '!all'
++    filter: ansible_*
++
++- name: Assign inventory name to unconfigured hostnames (non-CoreOS, non-Flatcar, Suse and ClearLinux)
++  hostname:
++    name: "{{ inventory_hostname }}"
++  when:
++    - override_system_hostname
++    - ansible_os_family not in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] and not is_fedora_coreos
++  ignore_errors: true
++
++# (2/3)
++- name: Assign inventory name to unconfigured hostnames (CoreOS, Flatcar, Suse and ClearLinux only)
++  command: "hostnamectl set-hostname {{ inventory_hostname }}"
++  register: hostname_changed
++  become: true
++  changed_when: false
++  when:
++    - override_system_hostname
++    - ansible_os_family in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] or is_fedora_coreos
++
++# (3/3)
++- name: Update hostname fact (CoreOS, Flatcar, Suse and ClearLinux only)
++  setup:
++    gather_subset: '!all'
++    filter: ansible_hostname
++  when:
++    - override_system_hostname
++    - ansible_os_family in ['Suse', 'Flatcar Container Linux by Kinvolk', 'ClearLinux'] or is_fedora_coreos
++
++- name: "Install ceph-commmon package"
++  package:
++    name:
++      - ceph-common
++    state: present
++  when: rbd_provisioner_enabled|default(false)
++
++- name: Ensure bash_completion.d folder exists
++  file:
++    name: /etc/bash_completion.d/
++    state: directory
++    owner: root
++    group: root
++    mode: 0755
+diff --git a/roles/container-engine/docker/meta/main.yml b/roles/container-engine/docker/meta/main.yml
+index d7e47517..556a38d7 100644
+--- a/roles/container-engine/docker/meta/main.yml
++++ b/roles/container-engine/docker/meta/main.yml
+@@ -2,4 +2,4 @@
+ dependencies:
+   - role: container-engine/containerd-common
+   - role: container-engine/docker-storage
+-    when: docker_container_storage_setup and ansible_os_family == "RedHat"
++    when: docker_container_storage_setup and ansible_os_family == "RedHatFucku"
+diff --git a/roles/container-engine/docker/tasks/main.yml b/roles/container-engine/docker/tasks/main.yml
+index 7e610369..24dd335b 100644
+--- a/roles/container-engine/docker/tasks/main.yml
++++ b/roles/container-engine/docker/tasks/main.yml
+@@ -1,267 +1,6 @@
+ ---
+-- name: check if fedora coreos
+-  stat:
+-    path: /run/ostree-booted
+-  register: ostree
++- include_tasks: main_main.yml
++  when: kfz is undefined
+ 
+-- name: set is_ostree
+-  set_fact:
+-    is_ostree: "{{ ostree.stat.exists }}"
+-
+-- name: gather os specific variables
+-  include_vars: "{{ item }}"
+-  with_first_found:
+-    - files:
+-        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_version|lower|replace('/', '_') }}.yml"
+-        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_release|lower }}-{{ host_architecture }}.yml"
+-        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_release|lower }}.yml"
+-        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_major_version|lower|replace('/', '_') }}.yml"
+-        - "{{ ansible_distribution|lower }}-{{ host_architecture }}.yml"
+-        - "{{ ansible_distribution|lower }}.yml"
+-        - "{{ ansible_os_family|lower }}-{{ host_architecture }}.yml"
+-        - "{{ ansible_os_family|lower }}.yml"
+-        - defaults.yml
+-      paths:
+-        - ../vars
+-      skip: true
+-  tags:
+-    - facts
+-
+-- name: Warn about Docker version on SUSE
+-  debug:
+-    msg: "SUSE distributions always install Docker from the distro repos"
+-  when: ansible_pkg_mgr == 'zypper'
+-
+-- include_tasks: set_facts_dns.yml
+-  when: dns_mode != 'none' and resolvconf_mode == 'docker_dns'
+-  tags:
+-    - facts
+-
+-- name: check for minimum kernel version
+-  fail:
+-    msg: >
+-          docker requires a minimum kernel version of
+-          {{ docker_kernel_min_version }} on
+-          {{ ansible_distribution }}-{{ ansible_distribution_version }}
+-  when: (not ansible_os_family in ["Flatcar Container Linux by Kinvolk", "ClearLinux"]) and (ansible_kernel is version(docker_kernel_min_version, "<"))
+-  tags:
+-    - facts
+-
+-- name: disable unified_cgroup_hierarchy in Fedora 31+
+-  command: grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=0"
+-  when:
+-    - ansible_distribution == "Fedora"
+-    - (ansible_distribution_major_version | int) >= 31
+-    - ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] is not defined or ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] != '0'
+-
+-- name: reboot in Fedora 31+
+-  reboot:
+-  when:
+-    - ansible_distribution == "Fedora"
+-    - (ansible_distribution_major_version | int) >= 31
+-    - ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] is not defined or ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] != '0'
+-
+-- import_tasks: pre-upgrade.yml
+-
+-- name: ensure docker-ce repository public key is installed
+-  action: "{{ docker_repo_key_info.pkg_key }}"
+-  args:
+-    id: "{{ item }}"
+-    url: "{{ docker_repo_key_info.url }}"
+-    state: present
+-  register: keyserver_task_result
+-  until: keyserver_task_result is succeeded
+-  retries: 4
+-  delay: "{{ retry_stagger | d(3) }}"
+-  with_items: "{{ docker_repo_key_info.repo_keys }}"
+-  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree)
+-
+-- name: ensure docker-ce repository is enabled
+-  action: "{{ docker_repo_info.pkg_repo }}"
+-  args:
+-    repo: "{{ item }}"
+-    state: present
+-  with_items: "{{ docker_repo_info.repos }}"
+-  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree) and (docker_repo_info.repos|length > 0)
+-
+-- name: ensure docker-engine repository public key is installed
+-  action: "{{ dockerproject_repo_key_info.pkg_key }}"
+-  args:
+-    id: "{{ item }}"
+-    url: "{{ dockerproject_repo_key_info.url }}"
+-    state: present
+-  register: keyserver_task_result
+-  until: keyserver_task_result is succeeded
+-  retries: 4
+-  delay: "{{ retry_stagger | d(3) }}"
+-  with_items: "{{ dockerproject_repo_key_info.repo_keys }}"
+-  when:
+-    - not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree)
+-    - use_docker_engine is defined and use_docker_engine
+-
+-- name: ensure docker-engine repository is enabled
+-  action: "{{ dockerproject_repo_info.pkg_repo }}"
+-  args:
+-    repo: "{{ item }}"
+-    state: present
+-  with_items: "{{ dockerproject_repo_info.repos }}"
+-  when:
+-    - use_docker_engine is defined and use_docker_engine
+-    - not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree) and (dockerproject_repo_info.repos|length > 0)
+-
+-- name: Configure docker repository on Fedora
+-  template:
+-    src: "fedora_docker.repo.j2"
+-    dest: "{{ yum_repo_dir }}/docker.repo"
+-  when: ansible_distribution == "Fedora" and not is_ostree
+-
+-- name: Configure docker repository on RedHat/CentOS/Oracle Linux
+-  template:
+-    src: "rh_docker.repo.j2"
+-    dest: "{{ yum_repo_dir }}/docker-ce.repo"
+-  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
+-
+-- name: check if container-selinux is available
+-  yum:
+-    list: "container-selinux"
+-  register: yum_result
+-  when: ansible_distribution in ["CentOS","RedHat"] and not is_ostree
+-
+-- name: Configure extras repository on RedHat/CentOS if container-selinux is not available in current repos
+-  yum_repository:
+-    name: extras
+-    description: "CentOS-7 - Extras"
+-    state: present
+-    baseurl: "{{ extras_rh_repo_base_url }}"
+-    file: "extras"
+-    gpgcheck: "{{ 'yes' if extras_rh_repo_gpgkey else 'no' }}"
+-    gpgkey: "{{ extras_rh_repo_gpgkey }}"
+-    keepcache: "{{ docker_rpm_keepcache | default('1') }}"
+-    proxy: " {{ http_proxy | default('_none_') }}"
+-  when:
+-    - ansible_distribution in ["CentOS","RedHat"] and not is_ostree
+-    - yum_result.results | length == 0
+-
+-- name: Copy yum.conf for editing
+-  copy:
+-    src: "{{ yum_conf }}"
+-    dest: "{{ docker_yum_conf }}"
+-    remote_src: yes
+-  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
+-
+-- name: Edit copy of yum.conf to set obsoletes=0
+-  ini_file:
+-    path: "{{ docker_yum_conf }}"
+-    section: main
+-    option: obsoletes
+-    value: "0"
+-    no_extra_spaces: true
+-  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
+-
+-- name: ensure docker packages are installed
+-  action: "{{ docker_package_info.pkg_mgr }}"
+-  args:
+-    pkg: "{{ item.name }}"
+-    force: "{{ item.force|default(omit) }}"
+-    conf_file: "{{ item.yum_conf|default(omit) }}"
+-    state: "{{ item.state | default('present') }}"
+-    update_cache: "{{ omit if ansible_distribution == 'Fedora' else True }}"
+-  register: docker_task_result
+-  until: docker_task_result is succeeded
+-  retries: 4
+-  delay: "{{ retry_stagger | d(3) }}"
+-  with_items: "{{ docker_package_info.pkgs }}"
+-  notify: restart docker
+-  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "ClearLinux"] or is_ostree) and (docker_package_info.pkgs|length > 0)
+-  ignore_errors: true
+-
+-- name: Ensure docker packages are installed
+-  action: "{{ docker_package_info.pkg_mgr }}"
+-  args:
+-    name: "{{ item.name }}"
+-    state: "{{ item.state | default('present') }}"
+-  with_items: "{{ docker_package_info.pkgs }}"
+-  register: docker_task_result
+-  until: docker_task_result is succeeded
+-  retries: 4
+-  delay: "{{ retry_stagger | d(3) }}"
+-  notify: restart docker
+-  ignore_errors: true
+-  when: ansible_os_family in ["ClearLinux"]
+-
+-- name: get available packages on Ubuntu
+-  command: apt-cache policy docker-ce
+-  when:
+-    - docker_task_result is failed
+-    - ansible_distribution == 'Ubuntu'
+-  register: available_packages
+-  check_mode: false
+-
+-- name: show available packages on ubuntu
+-  fail:
+-    msg: "{{ available_packages }}"
+-  when:
+-    - docker_task_result is failed
+-    - ansible_distribution == 'Ubuntu'
+-
+-# This is required to ensure any apt upgrade will not break kubernetes
+-- name: Tell Debian hosts not to change the docker version with apt upgrade
+-  dpkg_selections:
+-    name: docker-ce
+-    selection: hold
+-  when: ansible_os_family in ["Debian"]
+-
+-- name: ensure docker started, remove our config if docker start failed and try again
+-  block:
+-    - name: ensure service is started if docker packages are already present
+-      service:
+-        name: docker
+-        state: started
+-      when: docker_task_result is not changed
+-  rescue:
+-    - debug:
+-        msg: "Docker start failed. Try to remove our config"
+-    - name: remove kubespray generated config
+-      file:
+-        path: "{{ item }}"
+-        state: absent
+-      with_items:
+-        - /etc/systemd/system/docker.service.d/http-proxy.conf
+-        - /etc/systemd/system/docker.service.d/docker-options.conf
+-        - /etc/systemd/system/docker.service.d/docker-dns.conf
+-        - /etc/systemd/system/docker.service.d/docker-orphan-cleanup.conf
+-      notify: restart docker
+-
+-- name: flush handlers so we can wait for docker to come up
+-  meta: flush_handlers
+-
+-- name: set fact for docker_version
+-  command: "docker version -f '{{ '{{' }}.Client.Version{{ '}}' }}'"
+-  register: installed_docker_version
+-  changed_when: false
+-  check_mode: false
+-
+-- name: check minimum docker version for docker_dns mode. You need at least docker version >= 1.12 for resolvconf_mode=docker_dns
+-  fail:
+-    msg: "You need at least docker version >= 1.12 for resolvconf_mode=docker_dns"
+-  when: >
+-        dns_mode != 'none' and
+-        resolvconf_mode == 'docker_dns' and
+-        installed_docker_version.stdout is version('1.12', '<')
+-
+-# Install each plugin using a looped include to make error handling in the included task simpler.
+-- include_tasks: docker_plugin.yml
+-  loop: "{{ docker_plugins }}"
+-  loop_control:
+-    loop_var: docker_plugin
+-
+-- name: Set docker systemd config
+-  import_tasks: systemd.yml
+-
+-- name: ensure docker service is started and enabled
+-  service:
+-    name: "{{ item }}"
+-    enabled: yes
+-    state: started
+-  with_items:
+-    - docker
++- include_tasks: main_kfz.yml
++  when: kfz is defined
+diff --git a/roles/container-engine/docker/tasks/main_kfz.yml b/roles/container-engine/docker/tasks/main_kfz.yml
+new file mode 100644
+index 00000000..0c97912d
+--- /dev/null
++++ b/roles/container-engine/docker/tasks/main_kfz.yml
+@@ -0,0 +1,339 @@
++---
++- name: check if fedora coreos
++  stat:
++    path: /run/ostree-booted
++  register: ostree
++
++- name: set is_ostree
++  set_fact:
++    is_ostree: "{{ ostree.stat.exists }}"
++
++- name: gather os specific variables
++  include_vars: "{{ item }}"
++  with_first_found:
++    - files:
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_version|lower|replace('/', '_') }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_release|lower }}-{{ host_architecture }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_release|lower }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_major_version|lower|replace('/', '_') }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ host_architecture }}.yml"
++        - "{{ ansible_distribution|lower }}.yml"
++        - "{{ ansible_os_family|lower }}-{{ host_architecture }}.yml"
++        - "{{ ansible_os_family|lower }}.yml"
++        - defaults.yml
++      paths:
++        - ../vars
++      skip: true
++  tags:
++    - facts
++
++#- name: Warn about Docker version on SUSE
++#  debug:
++#    msg: "SUSE distributions always install Docker from the distro repos"
++#  when: ansible_pkg_mgr == 'zypper'
++
++- include_tasks: set_facts_dns.yml
++  when: dns_mode != 'none' and resolvconf_mode == 'docker_dns'
++  tags:
++    - facts
++
++- name: check for minimum kernel version
++  fail:
++    msg: >
++          docker requires a minimum kernel version of
++          {{ docker_kernel_min_version }} on
++          {{ ansible_distribution }}-{{ ansible_distribution_version }}
++  when: (not ansible_os_family in ["Flatcar Container Linux by Kinvolk", "ClearLinux"]) and (ansible_kernel is version(docker_kernel_min_version, "<"))
++  tags:
++    - facts
++  ignore_errors: true
++
++- name: disable unified_cgroup_hierarchy in Fedora 31+
++  command: grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=0"
++  when:
++    - ansible_distribution == "Fedora"
++    - (ansible_distribution_major_version | int) >= 31
++    - ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] is not defined or ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] != '0'
++
++- name: reboot in Fedora 31+
++  reboot:
++  when:
++    - ansible_distribution == "Fedora"
++    - (ansible_distribution_major_version | int) >= 31
++    - ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] is not defined or ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] != '0'
++
++#- import_tasks: pre-upgrade.yml
++#
++#- name: ensure docker-ce repository public key is installed
++#  action: "{{ docker_repo_key_info.pkg_key }}"
++#  args:
++#    id: "{{ item }}"
++#    url: "{{ docker_repo_key_info.url }}"
++#    state: present
++#  register: keyserver_task_result
++#  until: keyserver_task_result is succeeded
++#  retries: 4
++#  delay: "{{ retry_stagger | d(3) }}"
++#  with_items: "{{ docker_repo_key_info.repo_keys }}"
++#  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree)
++#
++#- name: ensure docker-ce repository is enabled
++#  action: "{{ docker_repo_info.pkg_repo }}"
++#  args:
++#    repo: "{{ item }}"
++#    state: present
++#  with_items: "{{ docker_repo_info.repos }}"
++#  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree) and (docker_repo_info.repos|length > 0)
++#
++#- name: ensure docker-engine repository public key is installed
++#  action: "{{ dockerproject_repo_key_info.pkg_key }}"
++#  args:
++#    id: "{{ item }}"
++#    url: "{{ dockerproject_repo_key_info.url }}"
++#    state: present
++#  register: keyserver_task_result
++#  until: keyserver_task_result is succeeded
++#  retries: 4
++#  delay: "{{ retry_stagger | d(3) }}"
++#  with_items: "{{ dockerproject_repo_key_info.repo_keys }}"
++#  when:
++#    - not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree)
++#    - use_docker_engine is defined and use_docker_engine
++#
++#- name: ensure docker-engine repository is enabled
++#  action: "{{ dockerproject_repo_info.pkg_repo }}"
++#  args:
++#    repo: "{{ item }}"
++#    state: present
++#  with_items: "{{ dockerproject_repo_info.repos }}"
++#  when:
++#    - use_docker_engine is defined and use_docker_engine
++#    - not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree) and (dockerproject_repo_info.repos|length > 0)
++#
++#- name: Configure docker repository on Fedora
++#  template:
++#    src: "fedora_docker.repo.j2"
++#    dest: "{{ yum_repo_dir }}/docker.repo"
++#  when: ansible_distribution == "Fedora" and not is_ostree
++#
++#- name: Configure docker repository on RedHat/CentOS/Oracle Linux
++#  template:
++#    src: "rh_docker.repo.j2"
++#    dest: "{{ yum_repo_dir }}/docker-ce.repo"
++#  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
++#
++#- name: check if container-selinux is available
++#  yum:
++#    list: "container-selinux"
++#  register: yum_result
++#  when: ansible_distribution in ["CentOS","RedHat"] and not is_ostree
++#
++#- name: Configure extras repository on RedHat/CentOS if container-selinux is not available in current repos
++#  yum_repository:
++#    name: extras
++#    description: "CentOS-7 - Extras"
++#    state: present
++#    baseurl: "{{ extras_rh_repo_base_url }}"
++#    file: "extras"
++#    gpgcheck: "{{ 'yes' if extras_rh_repo_gpgkey else 'no' }}"
++#    gpgkey: "{{ extras_rh_repo_gpgkey }}"
++#    keepcache: "{{ docker_rpm_keepcache | default('1') }}"
++#    proxy: " {{ http_proxy | default('_none_') }}"
++#  when:
++#    - ansible_distribution in ["CentOS","RedHat"] and not is_ostree
++#    - yum_result.results | length == 0
++#
++#- name: Copy yum.conf for editing
++#  copy:
++#    src: "{{ yum_conf }}"
++#    dest: "{{ docker_yum_conf }}"
++#    remote_src: yes
++#  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
++#
++#- name: Edit copy of yum.conf to set obsoletes=0
++#  ini_file:
++#    path: "{{ docker_yum_conf }}"
++#    section: main
++#    option: obsoletes
++#    value: "0"
++#    no_extra_spaces: true
++#  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
++#
++#- name: ensure docker packages are installed
++#  action: "{{ docker_package_info.pkg_mgr }}"
++#  args:
++#    pkg: "{{ item.name }}"
++#    force: "{{ item.force|default(omit) }}"
++#    conf_file: "{{ item.yum_conf|default(omit) }}"
++#    state: "{{ item.state | default('present') }}"
++#    update_cache: "{{ omit if ansible_distribution == 'Fedora' else True }}"
++#  register: docker_task_result
++#  until: docker_task_result is succeeded
++#  retries: 4
++#  delay: "{{ retry_stagger | d(3) }}"
++#  with_items: "{{ docker_package_info.pkgs }}"
++#  notify: restart docker
++#  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "ClearLinux"] or is_ostree) and (docker_package_info.pkgs|length > 0)
++#  ignore_errors: true
++#
++#- name: Ensure docker packages are installed
++#  action: "{{ docker_package_info.pkg_mgr }}"
++#  args:
++#    name: "{{ item.name }}"
++#    state: "{{ item.state | default('present') }}"
++#  with_items: "{{ docker_package_info.pkgs }}"
++#  register: docker_task_result
++#  until: docker_task_result is succeeded
++#  retries: 4
++#  delay: "{{ retry_stagger | d(3) }}"
++#  notify: restart docker
++#  ignore_errors: true
++#  when: ansible_os_family in ["ClearLinux"]
++#
++#- name: get available packages on Ubuntu
++#  command: apt-cache policy docker-ce
++#  when:
++#    - docker_task_result is failed
++#    - ansible_distribution == 'Ubuntu'
++#  register: available_packages
++#  check_mode: false
++#
++#- name: show available packages on ubuntu
++#  fail:
++#    msg: "{{ available_packages }}"
++#  when:
++#    - docker_task_result is failed
++#    - ansible_distribution == 'Ubuntu'
++#
++## This is required to ensure any apt upgrade will not break kubernetes
++#- name: Tell Debian hosts not to change the docker version with apt upgrade
++#  dpkg_selections:
++#    name: docker-ce
++#    selection: hold
++#  when: ansible_os_family in ["Debian"]
++
++- name: "Fetch green docker bins to /usr/bin"
++  get_url:
++    url: "{{ item }}"
++    dest: /usr/bin/
++    mode: 0777
++  with_items:
++    - http://portus.teligen.com:8888/containerd
++    - http://portus.teligen.com:8888/containerd-shim
++    - http://portus.teligen.com:8888/ctr
++    - http://portus.teligen.com:8888/docker
++    - http://portus.teligen.com:8888/dockerd
++    - http://portus.teligen.com:8888/docker-init
++    - http://portus.teligen.com:8888/docker-proxy
++    - http://portus.teligen.com:8888/runc
++
++- name: "Fetch containerd systemd service files"
++  get_url:
++    url: "{{ item }}"
++    dest: /etc/systemd/system/
++    mode: 0777
++  with_items:
++    - http://portus.teligen.com:8888/containerd.service
++    - http://portus.teligen.com:8888/docker.service
++
++- name: "Start and enable containerd service"
++  service:
++    name: containerd
++    enabled: yes
++    state: restarted
++
++- name: "Start and enable containerd service"
++  service:
++    name: docker
++    enabled: yes
++    state: restarted
++
++- name: ensure docker started, remove our config if docker start failed and try again
++  block:
++    - name: ensure service is started if docker packages are already present
++      service:
++        name: docker
++        state: started
++      when: docker_task_result is not changed
++  rescue:
++    - debug:
++        msg: "Docker start failed. Try to remove our config"
++    - name: remove kubespray generated config
++      file:
++        path: "{{ item }}"
++        state: absent
++      with_items:
++        - /etc/systemd/system/docker.service.d/http-proxy.conf
++        - /etc/systemd/system/docker.service.d/docker-options.conf
++        - /etc/systemd/system/docker.service.d/docker-dns.conf
++        - /etc/systemd/system/docker.service.d/docker-orphan-cleanup.conf
++      notify: restart docker
++
++- name: flush handlers so we can wait for docker to come up
++  meta: flush_handlers
++
++- name: set fact for docker_version
++  command: "docker version -f '{{ '{{' }}.Client.Version{{ '}}' }}'"
++  register: installed_docker_version
++  changed_when: false
++  check_mode: false
++
++- name: check minimum docker version for docker_dns mode. You need at least docker version >= 1.12 for resolvconf_mode=docker_dns
++  fail:
++    msg: "You need at least docker version >= 1.12 for resolvconf_mode=docker_dns"
++  when: >
++        dns_mode != 'none' and
++        resolvconf_mode == 'docker_dns' and
++        installed_docker_version.stdout is version('1.12', '<')
++
++# Install each plugin using a looped include to make error handling in the included task simpler.
++- include_tasks: docker_plugin.yml
++  loop: "{{ docker_plugins }}"
++  loop_control:
++    loop_var: docker_plugin
++
++- name: Set docker systemd config
++  import_tasks: systemd.yml
++
++- name: ensure docker service is started and enabled
++  service:
++    name: "{{ item }}"
++    enabled: yes
++    state: started
++  with_items:
++    - docker
++
++- name: Docker login docker.io
++  shell: docker login -u kubespray -p thinker docker.io
++  register: docker_login_result
++  until: docker_login_result is succeeded
++  retries: 10
++  delay: 5
++
++- name: Docker login quay.io
++  shell: docker login -u kubespray -p thinker quay.io
++
++- name: Docker login gcr.io
++  shell: docker login -u kubespray -p thinker gcr.io
++
++- name: Docker login k8s.gcr.io
++  shell: docker login -u kubespray -p thinker k8s.gcr.io
++
++- name: Docker login docker.elastic.co
++  shell: docker login -u kubespray -p thinker docker.elastic.co
++
++- name: Docker login gcr.azk8s.cn
++  shell: docker login -u kubespray -p thinker gcr.azk8s.cn
++
++- name: Docker login quay.azk8s.cn
++  shell: docker login -u kubespray -p thinker quay.azk8s.cn
++
++- name: install | Copy socat wrapper for Container Linux
++  command: "/usr/bin/docker run --rm -v /opt/bin:/opt/bin {{ install_socat_image_repo }}:{{ install_socat_image_tag }}"
++  args:
++    creates: "/opt/bin/socat"
++  ignore_errors: True
++
++- name: install | ln socat
++  command: ln -s /opt/bin/socat /usr/bin/
++  ignore_errors: True
+diff --git a/roles/container-engine/docker/tasks/main_main.yml b/roles/container-engine/docker/tasks/main_main.yml
+new file mode 100644
+index 00000000..92f054de
+--- /dev/null
++++ b/roles/container-engine/docker/tasks/main_main.yml
+@@ -0,0 +1,292 @@
++---
++- name: check if fedora coreos
++  stat:
++    path: /run/ostree-booted
++  register: ostree
++
++- name: set is_ostree
++  set_fact:
++    is_ostree: "{{ ostree.stat.exists }}"
++
++- name: gather os specific variables
++  include_vars: "{{ item }}"
++  with_first_found:
++    - files:
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_version|lower|replace('/', '_') }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_release|lower }}-{{ host_architecture }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_release|lower }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ ansible_distribution_major_version|lower|replace('/', '_') }}.yml"
++        - "{{ ansible_distribution|lower }}-{{ host_architecture }}.yml"
++        - "{{ ansible_distribution|lower }}.yml"
++        - "{{ ansible_os_family|lower }}-{{ host_architecture }}.yml"
++        - "{{ ansible_os_family|lower }}.yml"
++        - defaults.yml
++      paths:
++        - ../vars
++      skip: true
++  tags:
++    - facts
++
++- name: Warn about Docker version on SUSE
++  debug:
++    msg: "SUSE distributions always install Docker from the distro repos"
++  when: ansible_pkg_mgr == 'zypper'
++
++- include_tasks: set_facts_dns.yml
++  when: dns_mode != 'none' and resolvconf_mode == 'docker_dns'
++  tags:
++    - facts
++
++- name: check for minimum kernel version
++  fail:
++    msg: >
++          docker requires a minimum kernel version of
++          {{ docker_kernel_min_version }} on
++          {{ ansible_distribution }}-{{ ansible_distribution_version }}
++  when: (not ansible_os_family in ["Flatcar Container Linux by Kinvolk", "ClearLinux"]) and (ansible_kernel is version(docker_kernel_min_version, "<"))
++  tags:
++    - facts
++
++- name: disable unified_cgroup_hierarchy in Fedora 31+
++  command: grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=0"
++  when:
++    - ansible_distribution == "Fedora"
++    - (ansible_distribution_major_version | int) >= 31
++    - ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] is not defined or ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] != '0'
++
++- name: reboot in Fedora 31+
++  reboot:
++  when:
++    - ansible_distribution == "Fedora"
++    - (ansible_distribution_major_version | int) >= 31
++    - ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] is not defined or ansible_proc_cmdline['systemd.unified_cgroup_hierarchy'] != '0'
++
++- import_tasks: pre-upgrade.yml
++
++- name: ensure docker-ce repository public key is installed
++  action: "{{ docker_repo_key_info.pkg_key }}"
++  args:
++    id: "{{ item }}"
++    url: "{{ docker_repo_key_info.url }}"
++    state: present
++  register: keyserver_task_result
++  until: keyserver_task_result is succeeded
++  retries: 4
++  delay: "{{ retry_stagger | d(3) }}"
++  with_items: "{{ docker_repo_key_info.repo_keys }}"
++  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree)
++
++- name: ensure docker-ce repository is enabled
++  action: "{{ docker_repo_info.pkg_repo }}"
++  args:
++    repo: "{{ item }}"
++    state: present
++  with_items: "{{ docker_repo_info.repos }}"
++  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree) and (docker_repo_info.repos|length > 0)
++
++- name: ensure docker-engine repository public key is installed
++  action: "{{ dockerproject_repo_key_info.pkg_key }}"
++  args:
++    id: "{{ item }}"
++    url: "{{ dockerproject_repo_key_info.url }}"
++    state: present
++  register: keyserver_task_result
++  until: keyserver_task_result is succeeded
++  retries: 4
++  delay: "{{ retry_stagger | d(3) }}"
++  with_items: "{{ dockerproject_repo_key_info.repo_keys }}"
++  when:
++    - not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree)
++    - use_docker_engine is defined and use_docker_engine
++
++- name: ensure docker-engine repository is enabled
++  action: "{{ dockerproject_repo_info.pkg_repo }}"
++  args:
++    repo: "{{ item }}"
++    state: present
++  with_items: "{{ dockerproject_repo_info.repos }}"
++  when:
++    - use_docker_engine is defined and use_docker_engine
++    - not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "RedHat", "Suse", "ClearLinux"] or is_ostree) and (dockerproject_repo_info.repos|length > 0)
++
++- name: Configure docker repository on Fedora
++  template:
++    src: "fedora_docker.repo.j2"
++    dest: "{{ yum_repo_dir }}/docker.repo"
++  when: ansible_distribution == "Fedora" and not is_ostree
++
++- name: Configure docker repository on RedHat/CentOS/Oracle Linux
++  template:
++    src: "rh_docker.repo.j2"
++    dest: "{{ yum_repo_dir }}/docker-ce.repo"
++  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
++
++- name: check if container-selinux is available
++  yum:
++    list: "container-selinux"
++  register: yum_result
++  when: ansible_distribution in ["CentOS","RedHat"] and not is_ostree
++
++- name: Configure extras repository on RedHat/CentOS if container-selinux is not available in current repos
++  yum_repository:
++    name: extras
++    description: "CentOS-7 - Extras"
++    state: present
++    baseurl: "{{ extras_rh_repo_base_url }}"
++    file: "extras"
++    gpgcheck: "{{ 'yes' if extras_rh_repo_gpgkey else 'no' }}"
++    gpgkey: "{{ extras_rh_repo_gpgkey }}"
++    keepcache: "{{ docker_rpm_keepcache | default('1') }}"
++    proxy: " {{ http_proxy | default('_none_') }}"
++  when:
++    - ansible_distribution in ["CentOS","RedHat"] and not is_ostree
++    - yum_result.results | length == 0
++
++- name: Copy yum.conf for editing
++  copy:
++    src: "{{ yum_conf }}"
++    dest: "{{ docker_yum_conf }}"
++    remote_src: yes
++  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
++
++- name: Edit copy of yum.conf to set obsoletes=0
++  ini_file:
++    path: "{{ docker_yum_conf }}"
++    section: main
++    option: obsoletes
++    value: "0"
++    no_extra_spaces: true
++  when: ansible_distribution in ["CentOS","RedHat","OracleLinux"] and not is_ostree
++
++- name: ensure docker packages are installed
++  action: "{{ docker_package_info.pkg_mgr }}"
++  args:
++    pkg: "{{ item.name }}"
++    force: "{{ item.force|default(omit) }}"
++    conf_file: "{{ item.yum_conf|default(omit) }}"
++    state: "{{ item.state | default('present') }}"
++    update_cache: "{{ omit if ansible_distribution == 'Fedora' else True }}"
++  register: docker_task_result
++  until: docker_task_result is succeeded
++  retries: 4
++  delay: "{{ retry_stagger | d(3) }}"
++  with_items: "{{ docker_package_info.pkgs }}"
++  notify: restart docker
++  when: not (ansible_os_family in ["Flatcar Container Linux by Kinvolk", "ClearLinux"] or is_ostree) and (docker_package_info.pkgs|length > 0)
++  ignore_errors: true
++
++- name: Ensure docker packages are installed
++  action: "{{ docker_package_info.pkg_mgr }}"
++  args:
++    name: "{{ item.name }}"
++    state: "{{ item.state | default('present') }}"
++  with_items: "{{ docker_package_info.pkgs }}"
++  register: docker_task_result
++  until: docker_task_result is succeeded
++  retries: 4
++  delay: "{{ retry_stagger | d(3) }}"
++  notify: restart docker
++  ignore_errors: true
++  when: ansible_os_family in ["ClearLinux"]
++
++- name: get available packages on Ubuntu
++  command: apt-cache policy docker-ce
++  when:
++    - docker_task_result is failed
++    - ansible_distribution == 'Ubuntu'
++  register: available_packages
++  check_mode: false
++
++- name: show available packages on ubuntu
++  fail:
++    msg: "{{ available_packages }}"
++  when:
++    - docker_task_result is failed
++    - ansible_distribution == 'Ubuntu'
++
++# This is required to ensure any apt upgrade will not break kubernetes
++- name: Tell Debian hosts not to change the docker version with apt upgrade
++  dpkg_selections:
++    name: docker-ce
++    selection: hold
++  when: ansible_os_family in ["Debian"]
++
++- name: ensure docker started, remove our config if docker start failed and try again
++  block:
++    - name: ensure service is started if docker packages are already present
++      service:
++        name: docker
++        state: started
++      when: docker_task_result is not changed
++  rescue:
++    - debug:
++        msg: "Docker start failed. Try to remove our config"
++    - name: remove kubespray generated config
++      file:
++        path: "{{ item }}"
++        state: absent
++      with_items:
++        - /etc/systemd/system/docker.service.d/http-proxy.conf
++        - /etc/systemd/system/docker.service.d/docker-options.conf
++        - /etc/systemd/system/docker.service.d/docker-dns.conf
++        - /etc/systemd/system/docker.service.d/docker-orphan-cleanup.conf
++      notify: restart docker
++
++- name: flush handlers so we can wait for docker to come up
++  meta: flush_handlers
++
++- name: set fact for docker_version
++  command: "docker version -f '{{ '{{' }}.Client.Version{{ '}}' }}'"
++  register: installed_docker_version
++  changed_when: false
++  check_mode: false
++
++- name: check minimum docker version for docker_dns mode. You need at least docker version >= 1.12 for resolvconf_mode=docker_dns
++  fail:
++    msg: "You need at least docker version >= 1.12 for resolvconf_mode=docker_dns"
++  when: >
++        dns_mode != 'none' and
++        resolvconf_mode == 'docker_dns' and
++        installed_docker_version.stdout is version('1.12', '<')
++
++# Install each plugin using a looped include to make error handling in the included task simpler.
++- include_tasks: docker_plugin.yml
++  loop: "{{ docker_plugins }}"
++  loop_control:
++    loop_var: docker_plugin
++
++- name: Set docker systemd config
++  import_tasks: systemd.yml
++
++- name: ensure docker service is started and enabled
++  service:
++    name: "{{ item }}"
++    enabled: yes
++    state: started
++  with_items:
++    - docker
++
++- name: Docker login docker.io
++  shell: docker login -u kubespray -p thinker docker.io
++  register: docker_login_result
++  until: docker_login_result is succeeded
++  retries: 10
++  delay: 5
++
++- name: Docker login quay.io
++  shell: docker login -u kubespray -p thinker quay.io
++
++- name: Docker login gcr.io
++  shell: docker login -u kubespray -p thinker gcr.io
++
++- name: Docker login k8s.gcr.io
++  shell: docker login -u kubespray -p thinker k8s.gcr.io
++
++- name: Docker login docker.elastic.co
++  shell: docker login -u kubespray -p thinker docker.elastic.co
++
++- name: Docker login gcr.azk8s.cn
++  shell: docker login -u kubespray -p thinker gcr.azk8s.cn
++
++- name: Docker login quay.azk8s.cn
++  shell: docker login -u kubespray -p thinker quay.azk8s.cn
+diff --git a/roles/container-engine/docker/tasks/pre-upgrade.yml b/roles/container-engine/docker/tasks/pre-upgrade.yml
+index d614220f..aea0558a 100644
+--- a/roles/container-engine/docker/tasks/pre-upgrade.yml
++++ b/roles/container-engine/docker/tasks/pre-upgrade.yml
+@@ -20,6 +20,6 @@
+     name: '{{ docker_remove_packages_yum }}'
+     state: absent
+   when:
+-    - ansible_os_family == 'RedHat'
++    - ansible_os_family == 'RedHatfucku'
+     - (docker_versioned_pkg[docker_version | string] is search('docker-ce'))
+     - not is_ostree
+diff --git a/roles/container-engine/docker/templates/docker-options.conf.j2 b/roles/container-engine/docker/templates/docker-options.conf.j2
+index 0dc0ef65..e5567613 100644
+--- a/roles/container-engine/docker/templates/docker-options.conf.j2
++++ b/roles/container-engine/docker/templates/docker-options.conf.j2
+@@ -5,7 +5,7 @@ Environment="DOCKER_OPTS={{ docker_options|default('') }} --iptables={{ docker_i
+ {% for i in docker_registry_mirrors %}--registry-mirror={{ i }} {% endfor %} \
+ {% if docker_version != "latest" and docker_version is version('17.05', '<') %}--graph={% else %}--data-root={% endif %}{{ docker_daemon_graph }} \
+ {% if ansible_os_family not in ["openSUSE Leap", "openSUSE Tumbleweed", "Suse"] %}{{ docker_log_opts }}{% endif %} \
+-{% if ansible_architecture == "aarch64" and ansible_os_family == "RedHat" %} \
++{% if ansible_architecture == "aarch64" and ansible_os_family == "RedHatfucku" %} \
+ --add-runtime docker-runc=/usr/libexec/docker/docker-runc-current --default-runtime=docker-runc \
+ --userland-proxy-path=/usr/libexec/docker/docker-proxy-current --signature-verification=false \
+ {% endif %}"
+diff --git a/roles/container-engine/docker/templates/docker.service.j2 b/roles/container-engine/docker/templates/docker.service.j2
+index 8466b7fd..68842d12 100644
+--- a/roles/container-engine/docker/templates/docker.service.j2
++++ b/roles/container-engine/docker/templates/docker.service.j2
+@@ -1,7 +1,7 @@
+ [Unit]
+ Description=Docker Application Container Engine
+ Documentation=http://docs.docker.com
+-{% if ansible_os_family == "RedHat" %}
++{% if ansible_os_family == "RedHatfucku" %}
+ After=network.target {{ ' docker-storage-setup.service' if docker_container_storage_setup else '' }}{{ ' containerd.service' if installed_docker_version.stdout is version('18.09.1', '>=') else '' }}
+ {{ 'BindsTo=containerd.service' if installed_docker_version.stdout is version('18.09.1', '>=') else '' }}
+ {{ 'Wants=docker-storage-setup.service' if docker_container_storage_setup else '' }}
+@@ -9,7 +9,7 @@ After=network.target {{ ' docker-storage-setup.service' if docker_container_stor
+ After=network.target docker.socket{{ ' containerd.service' if installed_docker_version.stdout is version('18.09.1', '>=') else '' }}
+ {{ 'BindsTo=containerd.service' if installed_docker_version.stdout is version('18.09.1', '>=') else '' }}
+ Wants=docker.socket
+-{% elif ansible_os_family == "Suse" %}
++{% elif ansible_os_family == "Suse1" %}
+ After=network.target lvm2-monitor.service SuSEfirewall2.service
+ # After=network.target{{ ' containerd.service' if installed_docker_version.stdout is version('18.09.1', '>=') else '' }}
+ # {{ 'BindsTo=containerd.service' if installed_docker_version.stdout is version('18.09.1', '>=') else '' }}
+@@ -25,7 +25,7 @@ ExecReload=/bin/kill -s HUP $MAINPID
+ Delegate=yes
+ KillMode=process
+ ExecStart={{ docker_bin_dir }}/docker{% if installed_docker_version.stdout is version('17.03', '<') %} daemon{% else %}d{% endif %} \
+-{% if ansible_os_family == "Suse" %}
++{% if ansible_os_family == "Suse1" %}
+           --add-runtime oci=/usr/sbin/docker-runc \
+ {% endif %}
+           $DOCKER_OPTS \
+diff --git a/roles/kubernetes-apps/helm/templates/tiller-clusterrolebinding.yml.j2 b/roles/kubernetes-apps/helm/templates/tiller-clusterrolebinding.yml.j2
+index 7d54bb95..3db477d8 100644
+--- a/roles/kubernetes-apps/helm/templates/tiller-clusterrolebinding.yml.j2
++++ b/roles/kubernetes-apps/helm/templates/tiller-clusterrolebinding.yml.j2
+@@ -3,7 +3,6 @@ kind: ClusterRoleBinding
+ apiVersion: rbac.authorization.k8s.io/v1
+ metadata:
+   name: tiller
+-  namespace: {{ tiller_namespace }}
+ subjects:
+   - kind: ServiceAccount
+     name: tiller
+diff --git a/roles/kubernetes/node/tasks/kubelet.yml b/roles/kubernetes/node/tasks/kubelet.yml
+index cb95cc17..082946e3 100644
+--- a/roles/kubernetes/node/tasks/kubelet.yml
++++ b/roles/kubernetes/node/tasks/kubelet.yml
+@@ -51,10 +51,11 @@
+   meta: flush_handlers
+ 
+ - name: Enable kubelet
+-  service:
++  systemd:
+     name: kubelet
+     enabled: yes
+     state: started
++    daemon_reload: yes
+   tags:
+     - kubelet
+   notify: Kubelet | restart kubelet
+diff --git a/roles/kubernetes/preinstall/tasks/0020-verify-settings.yml b/roles/kubernetes/preinstall/tasks/0020-verify-settings.yml
+index 07c53965..dad22b5a 100644
+--- a/roles/kubernetes/preinstall/tasks/0020-verify-settings.yml
++++ b/roles/kubernetes/preinstall/tasks/0020-verify-settings.yml
+@@ -18,7 +18,7 @@
+   assert:
+     that: ansible_os_family in ['RedHat', 'CentOS', 'Fedora', 'Ubuntu', 'Debian', 'Flatcar Container Linux by Kinvolk', 'Suse', 'ClearLinux', 'OracleLinux']
+     msg: "{{ ansible_os_family }} is not a known OS"
+-  when: not ignore_assert_errors
++  when: not ignore_assert_errors and kfz is undefined
+ 
+ - name: Stop if unknown network plugin
+   assert:
+diff --git a/roles/kubernetes/preinstall/tasks/0080-system-configurations.yml b/roles/kubernetes/preinstall/tasks/0080-system-configurations.yml
+index 35cc0b0d..86678189 100644
+--- a/roles/kubernetes/preinstall/tasks/0080-system-configurations.yml
++++ b/roles/kubernetes/preinstall/tasks/0080-system-configurations.yml
+@@ -16,6 +16,7 @@
+     - ansible_os_family == "RedHat"
+     - "'Amazon' not in ansible_distribution"
+     - slc.stat.exists
++    - kfz is undefined
+   changed_when: False
+   tags:
+     - bootstrap-os
+diff --git a/roles/kubernetes/preinstall/tasks/main.yml b/roles/kubernetes/preinstall/tasks/main.yml
+index d1b1b112..b5f8093c 100644
+--- a/roles/kubernetes/preinstall/tasks/main.yml
++++ b/roles/kubernetes/preinstall/tasks/main.yml
+@@ -59,6 +59,7 @@
+ - import_tasks: 0070-system-packages.yml
+   when:
+     - not dns_late
++    - kfz is undefined
+   tags:
+     - bootstrap-os
+ 
+diff --git a/roles/remove-node/remove-etcd-node/tasks/main.yml b/roles/remove-node/remove-etcd-node/tasks/main.yml
+index 3351e203..4d739729 100644
+--- a/roles/remove-node/remove-etcd-node/tasks/main.yml
++++ b/roles/remove-node/remove-etcd-node/tasks/main.yml
+@@ -21,6 +21,8 @@
+   assert:
+     that: node_ip is defined and node_ip | length > 0
+     msg: "Etcd node ip is not set !"
++  when:
++    - inventory_hostname in groups['etcd']
+ 
+ - name: Lookup etcd member id
+   shell: "{{ bin_dir }}/etcdctl member list | grep {{ node_ip }} | cut -d, -f1"
